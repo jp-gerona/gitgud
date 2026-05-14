@@ -1,5 +1,6 @@
 mod action;
 mod app;
+mod commit_editor;
 mod event;
 mod git;
 mod history;

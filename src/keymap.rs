@@ -16,6 +16,8 @@ pub fn key_to_action(k: KeyEvent) -> Option<Action> {
         KeyCode::Char('r') => Some(Action::Refresh),
         KeyCode::Char('s') => Some(Action::StageSelected),
         KeyCode::Char('u') => Some(Action::UnstageSelected),
+        KeyCode::Char('c') => Some(Action::Commit),
+        KeyCode::Esc => Some(Action::Dismiss),
         _ => None,
     }
 }

@@ -8,4 +8,6 @@ pub enum Action {
     Refresh,
     StageSelected,
     UnstageSelected,
+    Commit,
+    Dismiss,
 }

@@ -27,7 +27,8 @@ src/
 ├── history.rs           ✓ ring buffer of executed git commands
 ├── action.rs            ✓ Action enum (Stage, Unstage, Commit, ...)
 ├── keymap.rs            ✓ (view, key) → Action table
-├── editor.rs            ○ suspend TUI, spawn $EDITOR, restore
+├── commit_editor.rs     ✓ in-TUI multiline editor state for commit messages
+├── editor.rs            ○ suspend TUI to run commands that take over the terminal ($EDITOR) — for future rebase
 ├── git/
 │   ├── mod.rs           ✓ GitCmd builder
 │   ├── runner.rs        ✓ spawn + capture stdout/stderr/status
