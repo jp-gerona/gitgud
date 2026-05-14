@@ -37,7 +37,7 @@ fn status_line(f: &mut Frame, area: Rect, app: &App) {
             Span::raw(err.as_str()),
         ])
     } else {
-        Line::from(" [Tab] switch pane   [j/k] move   [r] refresh   [q] quit ")
+        Line::from(" [Tab] pane  [j/k] move  [s] stage  [u] unstage  [r] refresh  [q] quit ")
     };
     f.render_widget(Paragraph::new(line), area);
 }

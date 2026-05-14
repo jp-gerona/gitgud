@@ -1,7 +1,9 @@
+mod action;
 mod app;
 mod event;
 mod git;
 mod history;
+mod keymap;
 mod ui;
 
 use anyhow::Result;

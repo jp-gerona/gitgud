@@ -84,7 +84,7 @@ fn draw_pane(
         .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
 
     let mut state = ListState::default();
-    if !entries.is_empty() {
+    if focused && !entries.is_empty() {
         state.select(Some(selected.min(entries.len() - 1)));
     }
     f.render_stateful_widget(list, area, &mut state);

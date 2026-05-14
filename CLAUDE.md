@@ -25,8 +25,8 @@ src/
 ├── app.rs               ✓ App state, event dispatch, refresh logic
 ├── event.rs             ✓ crossterm event polling → AppEvent
 ├── history.rs           ✓ ring buffer of executed git commands
-├── action.rs            ○ Action enum (Stage, Unstage, Commit, ...)
-├── keymap.rs            ○ (view, key) → Action table
+├── action.rs            ✓ Action enum (Stage, Unstage, Commit, ...)
+├── keymap.rs            ✓ (view, key) → Action table
 ├── editor.rs            ○ suspend TUI, spawn $EDITOR, restore
 ├── git/
 │   ├── mod.rs           ✓ GitCmd builder

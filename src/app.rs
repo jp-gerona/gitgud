@@ -1,9 +1,11 @@
+use crate::action::Action;
 use crate::event::{self, AppEvent};
 use crate::git::{self, FileStatus};
 use crate::history::History;
+use crate::keymap;
 use crate::ui;
 use anyhow::Result;
-use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crossterm::event::{KeyEvent, KeyEventKind};
 use ratatui::{Terminal, backend::Backend};
 use std::time::Duration;
 
@@ -59,24 +61,65 @@ impl App {
     }
 
     fn handle_key(&mut self, k: KeyEvent) {
-        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
-            self.should_quit = true;
+        let Some(action) = keymap::key_to_action(k) else {
             return;
-        }
-        match k.code {
-            KeyCode::Char('q') => self.should_quit = true,
-            KeyCode::Char('j') | KeyCode::Down => self.move_selection(1),
-            KeyCode::Char('k') | KeyCode::Up => self.move_selection(-1),
-            KeyCode::Tab => {
+        };
+        match action {
+            Action::Quit => self.should_quit = true,
+            Action::MoveSelection(d) => self.move_selection(d),
+            Action::SwitchPane => {
                 self.focused = match self.focused {
                     Pane::Unstaged => Pane::Staged,
                     Pane::Staged => Pane::Unstaged,
                 };
                 self.refresh_diff();
             }
-            KeyCode::Char('r') => self.refresh_status(),
-            _ => {}
+            Action::Refresh => self.refresh_status(),
+            Action::StageSelected => self.stage_selected(),
+            Action::UnstageSelected => self.unstage_selected(),
         }
+    }
+
+    fn stage_selected(&mut self) {
+        if self.focused != Pane::Unstaged {
+            return;
+        }
+        let Some(path) = self.selected_entry().map(|e| e.path.clone()) else {
+            return;
+        };
+        self.run_action(git::GitCmd::new("add").arg("--").arg(&path));
+    }
+
+    fn unstage_selected(&mut self) {
+        if self.focused != Pane::Staged {
+            return;
+        }
+        let Some(path) = self.selected_entry().map(|e| e.path.clone()) else {
+            return;
+        };
+        self.run_action(
+            git::GitCmd::new("restore")
+                .arg("--staged")
+                .arg("--")
+                .arg(&path),
+        );
+    }
+
+    /// Execute a user-initiated mutating command, refresh state, and leave the
+    /// command bar showing what was just run (refresh's own commands are
+    /// recorded into history but overwritten here so the teaching surface
+    /// reflects user intent rather than implicit reloads).
+    fn run_action(&mut self, cmd: git::GitCmd) {
+        let display = cmd.display();
+        match git::runner::run(&cmd) {
+            Ok(out) if !out.success() => {
+                self.error = Some(format!("{}: {}", display, out.stderr_str().trim()));
+            }
+            Ok(_) => self.error = None,
+            Err(e) => self.error = Some(format!("{}: {}", display, e)),
+        }
+        self.refresh_status();
+        self.history.record(&display);
     }
 
     fn move_selection(&mut self, delta: i32) {
