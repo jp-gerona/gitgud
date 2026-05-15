@@ -22,6 +22,9 @@ pub struct App {
     pub unstaged_selected: usize,
     pub staged_selected: usize,
     pub diff: String,                    // diff for the currently-selected file
+    pub diff_focused: bool,              // true when the Diff pane (not a file pane) has focus
+    pub diff_hunk: usize,                // selected hunk index while diff_focused
+    pub diff_parsed: Option<git::FileDiff>, // `diff` parsed into hunks (None if not hunk-stageable)
     pub log: git::LogList,               // last loaded `git log` snapshot
     pub log_selected: usize,
     pub log_detail: String,              // `git show --stat <sha>` for the selected commit
@@ -37,6 +40,7 @@ pub struct App {
 pub struct PendingConfirm {
     pub prompt: String,                  // shown in the status line
     pub cmd: git::GitCmd,                // run on `y`
+    pub stdin: Option<Vec<u8>>,          // piped to cmd on `y` (e.g. a one-hunk patch)
 }
 ```
 
@@ -83,6 +87,10 @@ handle_key(k)
       ├── tab key (1, 2, [, ])         → switch_view
       └── per-view dispatch
             ├── View::Status → handle_status_normal_key → keymap → match Action
+            │                  (each Action checks `diff_focused`: when the
+            │                   Diff pane has focus, j/k move hunks and
+            │                   s/u/X act on the selected hunk instead of the
+            │                   selected file)
             └── View::Log    → handle_log_normal_key (inline)
 ```
 
@@ -124,6 +132,37 @@ handle_confirm_key(k)
 Slash-prompt destructive commands (e.g. `/git restore foo.rs`, `/git clean -fd foo.rs`) **bypass** the confirm — typing the command verbatim is itself the confirmation. The shortcut is the only path that goes through the `[y/N]` gate.
 
 Future destructive shortcuts (`X` on a branch row, `D` on a stash entry, …) reuse this same pattern by constructing a `PendingConfirm` with their own prompt + cmd. No new dispatch code needed.
+
+`handle_confirm_key` runs the `cmd` on `y` via `run_action` (no stdin) or `run_action_stdin` (when `pending.stdin` is `Some`, e.g. the one-hunk patch for `git apply --reverse -`).
+
+## Hunk staging (Diff pane)
+
+`Tab` (`Action::SwitchPane`) drives `cycle_focus`, a 4-stop loop so each file
+pane is immediately followed by *its own* diff — the hunk you act on always
+belongs to the file you just selected:
+
+```
+Unstaged ──Tab──▶ Unstaged·Diff ──Tab──▶ Staged ──Tab──▶ Staged·Diff ──Tab──▶ …
+```
+
+`[`/`]` still switch *tabs* (views); only `Tab` walks this focus cycle.
+
+While `diff_focused`, the Status-view actions reroute:
+
+| Action | `diff_focused` behavior |
+|---|---|
+| `MoveSelection(±1)` | `move_diff_hunk` — clamp the hunk cursor in `diff_parsed` |
+| `StageSelected` (`s`) | `stage_selected_hunk` — `git apply --cached -` ⟵ one-hunk patch (Unstaged side only) |
+| `UnstageSelected` (`u`) | `unstage_selected_hunk` — `git apply --cached --reverse -` (Staged side only) |
+| `DiscardSelected` (`X`) | `discard_selected_hunk` — `PendingConfirm` for `git apply --reverse -` (Unstaged side only) |
+| `Dismiss` (`Esc`) | step out of the Diff pane (back to the file pane) instead of clearing `error` |
+
+The one-hunk patch is `git::FileDiff::single_hunk_patch(diff_hunk)` — see
+[`git::diff`](git-diff.md). `refresh_diff` calls `reparse_diff`, which
+re-derives `diff_parsed`, clamps `diff_hunk`, and steps out of the Diff pane
+when no hunks remain (e.g. the last hunk was just staged). Wrong-side
+attempts (e.g. `s` on the Staged diff) set a one-line `error` rather than
+acting.
 
 ## Log-view actions
 
@@ -210,5 +249,6 @@ If interactive rebase eventually lands, the suspend path will need to thread `te
 - [`commit_editor`](commit-editor.md) — state owned by `App`
 - [`prompt`](prompt.md) — state behind the slash-Command mode
 - [`git::log`](git-log.md) — parser feeding `App.log`
+- [`git::diff`](git-diff.md) — hunk parser feeding `App.diff_parsed`
 - [Log view](log-view.md) — render layer for the Log tab
 - [`ui`](ui.md) — pure render of `App` per frame

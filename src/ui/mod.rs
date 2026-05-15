@@ -75,6 +75,11 @@ fn status_view_hints(app: &App) -> Line<'_> {
     if let Some(err) = &app.error {
         return error_hints(err);
     }
+    if app.diff_focused {
+        return Line::from(
+            " [Tab] pane  [j/k] hunk  [s] stage hunk  [u] unstage hunk  [X] discard hunk  [Esc] back  [/] cmd  [q] quit ",
+        );
+    }
     Line::from(
         " [1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [X] discard  [c] commit  [/] cmd  [r] refresh  [q] quit ",
     )

@@ -42,6 +42,14 @@ pub struct App {
     pub unstaged_selected: usize,
     pub staged_selected: usize,
     pub diff: String,
+    /// `true` when the Diff pane (not a file pane) has focus — `j/k` move
+    /// between hunks and `s/u/X` operate on the selected hunk.
+    pub diff_focused: bool,
+    /// Selected hunk index within `diff_parsed` while `diff_focused`.
+    pub diff_hunk: usize,
+    /// `diff` parsed into hunks; `None` when the diff isn't hunk-stageable
+    /// (binary, empty, parse-less error text).
+    pub diff_parsed: Option<git::FileDiff>,
     pub log: git::LogList,
     pub log_selected: usize,
     pub log_detail: String,
@@ -63,6 +71,9 @@ pub struct App {
 pub struct PendingConfirm {
     pub prompt: String,
     pub cmd: git::GitCmd,
+    /// Bytes to pipe to the command's stdin on `y` (e.g. a one-hunk patch for
+    /// `git apply --reverse -`). `None` runs the command with no stdin.
+    pub stdin: Option<Vec<u8>>,
 }
 
 impl App {
@@ -73,6 +84,9 @@ impl App {
             unstaged_selected: 0,
             staged_selected: 0,
             diff: String::new(),
+            diff_focused: false,
+            diff_hunk: 0,
+            diff_parsed: None,
             log: git::LogList::default(),
             log_selected: 0,
             log_detail: String::new(),
@@ -156,20 +170,46 @@ impl App {
         };
         match action {
             Action::Quit => self.should_quit = true,
-            Action::MoveSelection(d) => self.move_selection(d),
-            Action::SwitchPane => {
-                self.focused = match self.focused {
-                    Pane::Unstaged => Pane::Staged,
-                    Pane::Staged => Pane::Unstaged,
-                };
-                self.refresh_diff();
+            Action::MoveSelection(d) => {
+                if self.diff_focused {
+                    self.move_diff_hunk(d);
+                } else {
+                    self.move_selection(d);
+                }
             }
+            Action::SwitchPane => self.cycle_focus(),
             Action::Refresh => self.refresh_status(),
-            Action::StageSelected => self.stage_selected(),
-            Action::UnstageSelected => self.unstage_selected(),
-            Action::DiscardSelected => self.discard_selected(),
+            Action::StageSelected => {
+                if self.diff_focused {
+                    self.stage_selected_hunk();
+                } else {
+                    self.stage_selected();
+                }
+            }
+            Action::UnstageSelected => {
+                if self.diff_focused {
+                    self.unstage_selected_hunk();
+                } else {
+                    self.unstage_selected();
+                }
+            }
+            Action::DiscardSelected => {
+                if self.diff_focused {
+                    self.discard_selected_hunk();
+                } else {
+                    self.discard_selected();
+                }
+            }
             Action::Commit => self.open_commit_editor(),
-            Action::Dismiss => self.error = None,
+            // In the diff pane, Esc steps back out to the file pane rather
+            // than dismissing an error.
+            Action::Dismiss => {
+                if self.diff_focused {
+                    self.diff_focused = false;
+                } else {
+                    self.error = None;
+                }
+            }
         }
     }
 
@@ -197,7 +237,10 @@ impl App {
             return;
         };
         if confirmed {
-            self.run_action(pending.cmd);
+            match pending.stdin {
+                Some(bytes) => self.run_action_stdin(pending.cmd, &bytes),
+                None => self.run_action(pending.cmd),
+            }
         }
         // Either way we clear; on cancel we keep `app.error` as-is.
     }
@@ -594,12 +637,130 @@ impl App {
                     .arg(&path),
             ),
         };
-        self.confirm = Some(PendingConfirm { prompt, cmd });
+        self.confirm = Some(PendingConfirm {
+            prompt,
+            cmd,
+            stdin: None,
+        });
+    }
+
+    // --- diff-pane focus & hunk staging ---------------------------------
+
+    /// `Tab` cycle: Unstaged → Unstaged·Diff → Staged → Staged·Diff → …
+    ///
+    /// Each file pane is followed by *its own* diff so the hunk you stage
+    /// always belongs to the file you just selected. `[`/`]` still switch
+    /// tabs (views); only `Tab` walks this cycle.
+    fn cycle_focus(&mut self) {
+        match (self.focused, self.diff_focused) {
+            (Pane::Unstaged, false) => self.diff_focused = true,
+            (Pane::Unstaged, true) => {
+                self.focused = Pane::Staged;
+                self.diff_focused = false;
+            }
+            (Pane::Staged, false) => self.diff_focused = true,
+            (Pane::Staged, true) => {
+                self.focused = Pane::Unstaged;
+                self.diff_focused = false;
+            }
+        }
+        self.diff_hunk = 0;
+        self.refresh_diff();
+    }
+
+    fn move_diff_hunk(&mut self, delta: i32) {
+        let n = self.diff_parsed.as_ref().map_or(0, |d| d.hunks.len());
+        if n == 0 {
+            self.diff_hunk = 0;
+            return;
+        }
+        self.diff_hunk = (self.diff_hunk as i32 + delta).clamp(0, (n - 1) as i32) as usize;
+    }
+
+    /// Build a one-hunk patch for the selected hunk, or set an error.
+    fn selected_hunk_patch(&mut self) -> Option<String> {
+        let patch = self
+            .diff_parsed
+            .as_ref()
+            .and_then(|d| d.single_hunk_patch(self.diff_hunk));
+        if patch.is_none() {
+            self.error = Some("no hunk to apply here".into());
+        }
+        patch
+    }
+
+    /// `s` in the Diff pane: stage just the selected hunk via
+    /// `git apply --cached -`. Only meaningful from the Unstaged side.
+    fn stage_selected_hunk(&mut self) {
+        if self.focused != Pane::Unstaged {
+            self.error = Some("switch to the Unstaged diff to stage a hunk".into());
+            return;
+        }
+        let Some(patch) = self.selected_hunk_patch() else {
+            return;
+        };
+        let cmd = git::GitCmd::new("apply").arg("--cached").arg("-");
+        self.run_action_stdin(cmd, patch.as_bytes());
+    }
+
+    /// `u` in the Diff pane: unstage just the selected hunk by
+    /// reverse-applying it to the index (`git apply --cached --reverse -`).
+    /// Only meaningful from the Staged side (the diff is `--cached` there).
+    fn unstage_selected_hunk(&mut self) {
+        if self.focused != Pane::Staged {
+            self.error = Some("switch to the Staged diff to unstage a hunk".into());
+            return;
+        }
+        let Some(patch) = self.selected_hunk_patch() else {
+            return;
+        };
+        let cmd = git::GitCmd::new("apply")
+            .arg("--cached")
+            .arg("--reverse")
+            .arg("-");
+        self.run_action_stdin(cmd, patch.as_bytes());
+    }
+
+    /// `X` in the Diff pane: discard the selected worktree hunk by
+    /// reverse-applying it (`git apply --reverse -`). Destructive — gated
+    /// through the same `[y/N]` `PendingConfirm` as file-level discard.
+    fn discard_selected_hunk(&mut self) {
+        if self.focused != Pane::Unstaged {
+            self.error = Some("hunk discard applies to the Unstaged diff only".into());
+            return;
+        }
+        let Some(patch) = self.selected_hunk_patch() else {
+            return;
+        };
+        self.confirm = Some(PendingConfirm {
+            prompt: format!(
+                "Discard hunk {} of this file's worktree changes?",
+                self.diff_hunk + 1
+            ),
+            cmd: git::GitCmd::new("apply").arg("--reverse").arg("-"),
+            stdin: Some(patch.into_bytes()),
+        });
     }
 
     fn run_action(&mut self, cmd: git::GitCmd) {
         let display = cmd.display();
         match git::runner::run(&cmd) {
+            Ok(out) if !out.success() => {
+                self.error = Some(format!("{}: {}", display, out.stderr_str().trim()));
+            }
+            Ok(_) => self.error = None,
+            Err(e) => self.error = Some(format!("{}: {}", display, e)),
+        }
+        self.refresh_status();
+        self.history.record(&display);
+    }
+
+    /// Like `run_action` but pipes `stdin` to the command — used for
+    /// `git apply [--cached] [--reverse] -` with a reconstructed one-hunk
+    /// patch. Mirrors `run_action`'s error/refresh/history contract.
+    fn run_action_stdin(&mut self, cmd: git::GitCmd, stdin: &[u8]) {
+        let display = cmd.display();
+        match git::runner::run_with_stdin(&cmd, stdin) {
             Ok(out) if !out.success() => {
                 self.error = Some(format!("{}: {}", display, out.stderr_str().trim()));
             }
@@ -718,6 +879,9 @@ impl App {
             .map(|e| (e.path.clone(), matches!(e.index, FileStatus::Untracked)));
         let Some((path, is_untracked)) = info else {
             self.diff = String::new();
+            self.diff_parsed = None;
+            self.diff_hunk = 0;
+            self.diff_focused = false;
             return;
         };
 
@@ -749,6 +913,23 @@ impl App {
                 }
             }
             Err(e) => self.diff = format!("(error: {})", e),
+        }
+        self.reparse_diff();
+    }
+
+    /// Re-derive `diff_parsed` from `diff` and keep the hunk cursor / focus
+    /// consistent: clamp `diff_hunk`, and step out of the diff pane if there
+    /// are no hunks left to act on (e.g. the last hunk was just staged).
+    fn reparse_diff(&mut self) {
+        let parsed = git::diff::parse(&self.diff);
+        if parsed.is_empty() {
+            self.diff_parsed = None;
+            self.diff_hunk = 0;
+            self.diff_focused = false;
+        } else {
+            let n = parsed.hunks.len();
+            self.diff_hunk = self.diff_hunk.min(n - 1);
+            self.diff_parsed = Some(parsed);
         }
     }
 

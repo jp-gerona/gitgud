@@ -1,3 +1,4 @@
+pub mod diff;
 pub mod log;
 pub mod runner;
 pub mod status;
@@ -5,6 +6,7 @@ pub mod status;
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+pub use diff::FileDiff;
 pub use log::{LogEntry, LogList};
 pub use status::{FileEntry, FileStatus, StatusList};
 

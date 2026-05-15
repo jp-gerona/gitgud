@@ -35,7 +35,7 @@ src/
 │   ├── runner.rs        ✓ spawn + capture stdout/stderr/status
 │   ├── status.rs        ✓ parse `git status --porcelain=v1 -z`
 │   ├── log.rs           ✓ parse `git log --pretty=format:...` + `git show --stat`
-│   ├── diff.rs          ○ hunk-level parsing for stage-by-hunk
+│   ├── diff.rs          ✓ hunk-level parsing + one-hunk patch reconstruction
 │   ├── branch.rs        ○ `git branch -vv`, current, upstream
 │   └── rebase.rs        ○ interactive rebase via GIT_SEQUENCE_EDITOR
 └── ui/

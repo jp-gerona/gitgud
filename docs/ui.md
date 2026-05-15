@@ -35,6 +35,7 @@ The status line is view- and mode-aware. Each branch returns a `Line`. The prece
 
 - **Confirm pending** — yellow `confirm` chip + the prompt text + `[y]` (red) yes / `[N]` (green) no.
 - **Status view (Normal)** — `[1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [X] discard  [c] commit  [/] cmd  [r] refresh  [q] quit`.
+- **Status view (Diff pane focused)** — `[Tab] pane  [j/k] hunk  [s] stage hunk  [u] unstage hunk  [X] discard hunk  [Esc] back  [/] cmd  [q] quit`. Checked after `error`, before the normal Status hints.
 - **Log view (Normal)** — `[1/2] tab  [j/k] move  [g/G] top/bottom  [/] cmd  [r] refresh  [q] quit`.
 - **Command mode** (either tabbed view) — `[Esc] back  [↑/↓] history  [Enter] run`.
 - **Error** — red `error` chip + message + `[Esc] dismiss`.
@@ -86,6 +87,14 @@ Renders the Status view as a horizontal 40/60 split:
 ```
 
 Each file row shows a status symbol (`M`, `A`, `?`, …) colored by the pane's perspective (`worktree` for Unstaged, `index` for Staged). The selected row uses a reversed style; only the **focused** pane sets its `ListState` selection, so the unfocused pane shows no highlight. (Earlier iterations highlighted both panes simultaneously, which was visually confusing.)
+
+When the diff parsed into hunks (`app.diff_parsed`), the panel is
+hunk-aware: the title shows ` Diff (hunk h/n) `, every body line gets a
+2-col gutter, and the **selected hunk**'s lines get a cyan-bold `▌ ` gutter
+instead of blanks. The border turns `FOCUS_BORDER` (cyan) when
+`app.diff_focused`; while the Diff pane has focus neither file pane shows a
+selection highlight (both borders dim). Binary / empty diffs fall back to
+the plain line rendering with a ` Diff ` title.
 
 The diff panel colorizes lines by leading character:
 
@@ -143,4 +152,5 @@ Only one terminal cursor exists per frame; `Frame::set_cursor_position` is calle
 - [`prompt`](prompt.md) — state behind `prompt_bar`
 - [`git::status`](git-status.md) — data behind `views::status`
 - [`git::log`](git-log.md) — data behind `views::log`
+- [`git::diff`](git-diff.md) — hunk data behind the Diff pane
 - [Log view deep dive](log-view.md) — layout, row rendering, ref chip colors

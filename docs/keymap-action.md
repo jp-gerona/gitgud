@@ -72,6 +72,8 @@ match action {
 
 Notice that `StageSelected` / `UnstageSelected` are pane-gated inside the handler — `s` on the Staged pane is a no-op, not an error. The keymap doesn't know about panes; that's the handler's job.
 
+All of `MoveSelection` / `StageSelected` / `UnstageSelected` / `DiscardSelected` / `Dismiss` are additionally **diff-focus-aware**: when `app.diff_focused`, the handler reroutes the same key to the hunk equivalent (`j/k` move hunks; `s/u/X` stage/unstage/discard the selected hunk; `Esc` steps out of the Diff pane). The keymap stays a flat key→Action table — the contextual split lives in the handler, same as the pane gating below. See [`app` → Hunk staging](app.md#hunk-staging-diff-pane).
+
 `DiscardSelected` is pane-aware in a richer sense: the handler picks a different `GitCmd` per pane and per file status (untracked → `git clean -fd`, modified → `git restore`, staged → `git restore --staged --worktree --source=HEAD`). It also doesn't execute directly — it stages a [`PendingConfirm`](app.md#destructive-ops-pendingconfirm) which the next key (`y` or anything else) resolves.
 
 ## Growing the keymap
