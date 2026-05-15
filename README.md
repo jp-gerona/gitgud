@@ -101,7 +101,7 @@ cargo fmt -- --check
 
 Module-by-module deep dives live in [`docs/`](docs/):
 
-- [Architecture](docs/architecture.md) — module map, data flow, design choices
+- [Architecture](docs/architecture.md)
 - [GitCmd builder](docs/git-cmd.md)
 - [Process runner](docs/git-runner.md)
 - [Status parser](docs/git-status.md)
