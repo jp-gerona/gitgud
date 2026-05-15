@@ -177,8 +177,9 @@ impl App {
                     self.move_selection(d);
                 }
             }
-            Action::SwitchPane => self.cycle_focus(),
-            Action::SwitchPaneBack => self.cycle_focus_back(),
+            Action::SwitchPane | Action::SwitchPaneBack => self.toggle_file_pane(),
+            Action::EnterDiff => self.enter_diff(),
+            Action::LeaveDiff => self.leave_diff(),
             Action::Refresh => self.refresh_status(),
             Action::StageSelected => {
                 if self.diff_focused {
@@ -647,45 +648,41 @@ impl App {
 
     // --- diff-pane focus & hunk staging ---------------------------------
 
-    /// `Tab` cycle: Unstaged → Unstaged·Diff → Staged → Staged·Diff → …
+    /// `Tab`/`Shift+Tab`: flip between the Unstaged and Staged file panes.
     ///
-    /// Each file pane is followed by *its own* diff so the hunk you stage
-    /// always belongs to the file you just selected. `[`/`]` still switch
-    /// tabs (views); only `Tab` walks this cycle.
-    fn cycle_focus(&mut self) {
-        match (self.focused, self.diff_focused) {
-            (Pane::Unstaged, false) => self.diff_focused = true,
-            (Pane::Unstaged, true) => {
-                self.focused = Pane::Staged;
-                self.diff_focused = false;
-            }
-            (Pane::Staged, false) => self.diff_focused = true,
-            (Pane::Staged, true) => {
-                self.focused = Pane::Unstaged;
-                self.diff_focused = false;
-            }
+    /// Navigation has two zones: the *file panes* (Unstaged/Staged) and the
+    /// *Diff pane*. `Tab` only moves within the file zone; it is inert while
+    /// the Diff pane is focused (use `h` to leave the diff first). `[`/`]`
+    /// still switch tabs (views).
+    fn toggle_file_pane(&mut self) {
+        if self.diff_focused {
+            return;
         }
+        self.focused = match self.focused {
+            Pane::Unstaged => Pane::Staged,
+            Pane::Staged => Pane::Unstaged,
+        };
         self.diff_hunk = 0;
         self.refresh_diff();
     }
 
-    /// `Shift+Tab` walks [`cycle_focus`] in reverse:
-    /// Staged·Diff → Staged → Unstaged·Diff → Unstaged → …
-    fn cycle_focus_back(&mut self) {
-        match (self.focused, self.diff_focused) {
-            (Pane::Unstaged, true) => self.diff_focused = false,
-            (Pane::Unstaged, false) => {
-                self.focused = Pane::Staged;
-                self.diff_focused = true;
-            }
-            (Pane::Staged, true) => self.diff_focused = false,
-            (Pane::Staged, false) => {
-                self.focused = Pane::Unstaged;
-                self.diff_focused = true;
-            }
+    /// `l`/`→`: enter the Diff pane for the file selected in the current file
+    /// pane. The Diff pane is a real focus stop even when the file has no
+    /// hunks (it shows "(no diff)"); `refresh_diff` no longer kicks focus
+    /// back out, so staging the last hunk leaves you here until you press
+    /// `h`.
+    fn enter_diff(&mut self) {
+        if self.diff_focused {
+            return;
         }
+        self.diff_focused = true;
         self.diff_hunk = 0;
         self.refresh_diff();
+    }
+
+    /// `h`/`←`: leave the Diff pane, returning focus to the file panes.
+    fn leave_diff(&mut self) {
+        self.diff_focused = false;
     }
 
     fn move_diff_hunk(&mut self, delta: i32) {
@@ -898,10 +895,11 @@ impl App {
             .selected_entry()
             .map(|e| (e.path.clone(), matches!(e.index, FileStatus::Untracked)));
         let Some((path, is_untracked)) = info else {
+            // No file selected (e.g. clean tree): clear the diff but keep the
+            // focus zone. Navigation owns `diff_focused`, not data.
             self.diff = String::new();
             self.diff_parsed = None;
             self.diff_hunk = 0;
-            self.diff_focused = false;
             return;
         };
 
@@ -937,15 +935,16 @@ impl App {
         self.reparse_diff();
     }
 
-    /// Re-derive `diff_parsed` from `diff` and keep the hunk cursor / focus
-    /// consistent: clamp `diff_hunk`, and step out of the diff pane if there
-    /// are no hunks left to act on (e.g. the last hunk was just staged).
+    /// Re-derive `diff_parsed` from `diff` and keep the hunk cursor in range.
+    /// Focus is owned by navigation, so an emptied diff does *not* change
+    /// `diff_focused` — the user stays in the Diff zone until they press `h`.
     fn reparse_diff(&mut self) {
         let parsed = git::diff::parse(&self.diff);
         if parsed.is_empty() {
+            // Empty diff (e.g. last hunk just staged): drop the parsed hunks
+            // but stay in the Diff zone — the user leaves with `h`.
             self.diff_parsed = None;
             self.diff_hunk = 0;
-            self.diff_focused = false;
         } else {
             let n = parsed.hunks.len();
             self.diff_hunk = self.diff_hunk.min(n - 1);
@@ -996,62 +995,58 @@ mod tests {
         app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
     }
 
-    /// Tab walks the focus cycle: Unstaged → Unstaged·Diff → Staged →
-    /// Staged·Diff → back to Unstaged.
+    /// `Tab`/`Shift+Tab` flip between the two file panes and never enter
+    /// the Diff pane.
     #[test]
-    fn tab_cycles_pane_focus() {
+    fn tab_flips_file_panes() {
         let mut a = app();
         assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
-
-        press(&mut a, KeyCode::Tab);
-        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, true));
 
         press(&mut a, KeyCode::Tab);
         assert_eq!((a.focused, a.diff_focused), (Pane::Staged, false));
 
         press(&mut a, KeyCode::Tab);
-        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, true));
-
-        press(&mut a, KeyCode::Tab);
         assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
-    }
 
-    /// Shift+Tab (`BackTab`) walks the cycle in reverse and is the exact
-    /// inverse of Tab from every state.
-    #[test]
-    fn backtab_reverses_pane_focus() {
-        let mut a = app();
-
-        press(&mut a, KeyCode::BackTab);
-        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, true));
-
+        // Shift+Tab is the same flip (only two file panes).
         press(&mut a, KeyCode::BackTab);
         assert_eq!((a.focused, a.diff_focused), (Pane::Staged, false));
-
-        press(&mut a, KeyCode::BackTab);
-        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, true));
-
-        press(&mut a, KeyCode::BackTab);
-        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
-
-        // Tab then BackTab is a no-op from every state in the cycle.
-        for _ in 0..4 {
-            let snap = (a.focused, a.diff_focused);
-            press(&mut a, KeyCode::Tab);
-            press(&mut a, KeyCode::BackTab);
-            assert_eq!((a.focused, a.diff_focused), snap);
-            press(&mut a, KeyCode::Tab);
-        }
     }
 
-    /// Tab must reach the status dispatcher even though tab-bar navigation
-    /// runs first in `handle_key`.
+    /// `l` enters the Diff zone, `h` leaves it. Both are idempotent, and
+    /// `Tab` is inert while in the Diff zone.
     #[test]
-    fn tab_not_swallowed_by_tab_bar() {
+    fn l_enters_h_leaves_diff_zone() {
+        let mut a = app();
+
+        press(&mut a, KeyCode::Char('l'));
+        assert!(a.diff_focused, "l must enter the Diff zone");
+        let pane = a.focused;
+
+        // Tab is inert in the Diff zone (file pane unchanged, still in diff).
+        press(&mut a, KeyCode::Tab);
+        assert_eq!((a.focused, a.diff_focused), (pane, true));
+
+        // l again is a no-op.
+        press(&mut a, KeyCode::Char('l'));
+        assert!(a.diff_focused);
+
+        press(&mut a, KeyCode::Char('h'));
+        assert!(!a.diff_focused, "h must leave the Diff zone");
+
+        // h in the file zone is a harmless no-op.
+        press(&mut a, KeyCode::Char('h'));
+        assert!(!a.diff_focused);
+    }
+
+    /// `l`/`h` must reach the status dispatcher even though tab-bar
+    /// navigation runs first in `handle_key`.
+    #[test]
+    fn zone_keys_not_swallowed_by_tab_bar() {
         let mut a = app();
         let before = a.view;
-        press(&mut a, KeyCode::Tab);
-        assert_eq!(a.view, before, "Tab must not switch views");
-        assert!(a.diff_focused, "Tab must move focus into the diff pane");
+        press(&mut a, KeyCode::Char('l'));
+        assert_eq!(a.view, before, "l must not switch views");
+        assert!(a.diff_focused, "l must move focus into the Diff pane");
     }
 }
