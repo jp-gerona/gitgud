@@ -4,6 +4,11 @@ A lightweight terminal UI for git, written in Rust.
 
 gitgud helps you *do* git in the terminal while *learning* it — every action surfaces the underlying `git ...` command in a teaching bar, and the commit editor is a modal vi-style buffer so you can practice both at once.
 
+<p align="center">
+<img src="https://img.shields.io/badge/Built_with-Rust-000?logo=rust&amp;logoColor=fff&amp;labelColor=201a16&amp;color=dea584" alt="Built with Rust badge">
+<img src="https://img.shields.io/badge/Built_with-Ratatui-000?logo=ratatui&amp;logoColor=fff&amp;labelColor=201a16&amp;color=dea584" alt="Built with Ratatui badge">
+</p>
+
 ## Features
 
 - **Tabbed views** — `1` Status, `2` Log (more to come). `[` / `]` cycle. Live counts in the tab labels.
