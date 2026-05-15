@@ -1,5 +1,4 @@
 # gitgud
-
 A lightweight terminal UI for git, written in Rust.
 
 gitgud helps you *do* git in the terminal while *learning* it — every action surfaces the underlying `git ...` command in a teaching bar, and the commit editor is a modal vi-style buffer so you can practice both at once.

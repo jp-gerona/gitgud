@@ -178,6 +178,7 @@ impl App {
                 }
             }
             Action::SwitchPane => self.cycle_focus(),
+            Action::SwitchPaneBack => self.cycle_focus_back(),
             Action::Refresh => self.refresh_status(),
             Action::StageSelected => {
                 if self.diff_focused {
@@ -668,6 +669,25 @@ impl App {
         self.refresh_diff();
     }
 
+    /// `Shift+Tab` walks [`cycle_focus`] in reverse:
+    /// Staged·Diff → Staged → Unstaged·Diff → Unstaged → …
+    fn cycle_focus_back(&mut self) {
+        match (self.focused, self.diff_focused) {
+            (Pane::Unstaged, true) => self.diff_focused = false,
+            (Pane::Unstaged, false) => {
+                self.focused = Pane::Staged;
+                self.diff_focused = true;
+            }
+            (Pane::Staged, true) => self.diff_focused = false,
+            (Pane::Staged, false) => {
+                self.focused = Pane::Unstaged;
+                self.diff_focused = true;
+            }
+        }
+        self.diff_hunk = 0;
+        self.refresh_diff();
+    }
+
     fn move_diff_hunk(&mut self, delta: i32) {
         let n = self.diff_parsed.as_ref().map_or(0, |d| d.hunks.len());
         if n == 0 {
@@ -961,5 +981,77 @@ fn clamp_sel(sel: usize, len: usize) -> usize {
         len - 1
     } else {
         sel
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn app() -> App {
+        App::new().expect("App::new")
+    }
+
+    fn press(app: &mut App, code: KeyCode) {
+        app.handle_key(KeyEvent::new(code, KeyModifiers::NONE));
+    }
+
+    /// Tab walks the focus cycle: Unstaged → Unstaged·Diff → Staged →
+    /// Staged·Diff → back to Unstaged.
+    #[test]
+    fn tab_cycles_pane_focus() {
+        let mut a = app();
+        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
+
+        press(&mut a, KeyCode::Tab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, true));
+
+        press(&mut a, KeyCode::Tab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, false));
+
+        press(&mut a, KeyCode::Tab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, true));
+
+        press(&mut a, KeyCode::Tab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
+    }
+
+    /// Shift+Tab (`BackTab`) walks the cycle in reverse and is the exact
+    /// inverse of Tab from every state.
+    #[test]
+    fn backtab_reverses_pane_focus() {
+        let mut a = app();
+
+        press(&mut a, KeyCode::BackTab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, true));
+
+        press(&mut a, KeyCode::BackTab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Staged, false));
+
+        press(&mut a, KeyCode::BackTab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, true));
+
+        press(&mut a, KeyCode::BackTab);
+        assert_eq!((a.focused, a.diff_focused), (Pane::Unstaged, false));
+
+        // Tab then BackTab is a no-op from every state in the cycle.
+        for _ in 0..4 {
+            let snap = (a.focused, a.diff_focused);
+            press(&mut a, KeyCode::Tab);
+            press(&mut a, KeyCode::BackTab);
+            assert_eq!((a.focused, a.diff_focused), snap);
+            press(&mut a, KeyCode::Tab);
+        }
+    }
+
+    /// Tab must reach the status dispatcher even though tab-bar navigation
+    /// runs first in `handle_key`.
+    #[test]
+    fn tab_not_swallowed_by_tab_bar() {
+        let mut a = app();
+        let before = a.view;
+        press(&mut a, KeyCode::Tab);
+        assert_eq!(a.view, before, "Tab must not switch views");
+        assert!(a.diff_focused, "Tab must move focus into the diff pane");
     }
 }

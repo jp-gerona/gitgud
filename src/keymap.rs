@@ -13,6 +13,7 @@ pub fn key_to_action(k: KeyEvent) -> Option<Action> {
         KeyCode::Char('j') | KeyCode::Down => Some(Action::MoveSelection(1)),
         KeyCode::Char('k') | KeyCode::Up => Some(Action::MoveSelection(-1)),
         KeyCode::Tab => Some(Action::SwitchPane),
+        KeyCode::BackTab => Some(Action::SwitchPaneBack),
         KeyCode::Char('r') => Some(Action::Refresh),
         KeyCode::Char('s') => Some(Action::StageSelected),
         KeyCode::Char('u') => Some(Action::UnstageSelected),

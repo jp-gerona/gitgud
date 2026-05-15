@@ -5,6 +5,7 @@ pub enum Action {
     Quit,
     MoveSelection(i32),
     SwitchPane,
+    SwitchPaneBack,
     Refresh,
     StageSelected,
     UnstageSelected,
