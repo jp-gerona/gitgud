@@ -21,6 +21,7 @@ pub enum Action {
     Refresh,
     StageSelected,
     UnstageSelected,
+    DiscardSelected,
     Commit,
     Dismiss,
 }
@@ -46,6 +47,7 @@ A flat match. Returns `None` for unbound keys so the dispatcher can ignore them 
 | `r` | `Refresh` |
 | `s` | `StageSelected` |
 | `u` | `UnstageSelected` |
+| `X` | `DiscardSelected` |
 | `c` | `Commit` |
 | `Esc` | `Dismiss` |
 | (anything else) | `None` |
@@ -69,6 +71,8 @@ match action {
 ```
 
 Notice that `StageSelected` / `UnstageSelected` are pane-gated inside the handler — `s` on the Staged pane is a no-op, not an error. The keymap doesn't know about panes; that's the handler's job.
+
+`DiscardSelected` is pane-aware in a richer sense: the handler picks a different `GitCmd` per pane and per file status (untracked → `git clean -fd`, modified → `git restore`, staged → `git restore --staged --worktree --source=HEAD`). It also doesn't execute directly — it stages a [`PendingConfirm`](app.md#destructive-ops-pendingconfirm) which the next key (`y` or anything else) resolves.
 
 ## Growing the keymap
 

@@ -9,7 +9,7 @@ gitgud helps you *do* git in the terminal while *learning* it — every action s
 - **Tabbed views** — `1` Status, `2` Log (more to come). `[` / `]` cycle. Live counts in the tab labels.
 - **Status view** — staged / unstaged / untracked panes with a live diff preview.
 - **Log view** — last 200 commits with author + relative time + ref chips (HEAD / branches / tags). Right pane shows `git show --stat` for the selected commit.
-- **One-key stage / unstage** — `s` / `u` show the exact `git add --` and `git restore --staged --` they run.
+- **One-key stage / unstage / discard** — `s` / `u` / `X` show the exact `git add`, `git restore`, `git clean` commands they run. Discard has a `[y/N]` safety prompt.
 - **Slash Command mode** — press `/` to drop into a prompt and type real git commands (`/git status`, `/git add foo`, `/git commit -m "wip"`), with ↑/↓ history recall. `/git log` and `/git status` auto-switch to the matching tab. `/exit` and `/quit` close gitgud.
 - **Teaching command bar** — every executed `git ...` rendered copy-pasteable at the bottom.
 - **Modal commit editor** — vi-style Normal / Insert / Command modes (`i a I A o O`, `h j k l w b 0 $ gg G`, `x dd dw D`, `:w :wq :x :q :q!`) with a mode-aware hints panel.
@@ -59,6 +59,7 @@ cargo fmt -- --check
 | `j` `k` (or arrows) | move selection |
 | `s` | stage selected file |
 | `u` | unstage selected file |
+| `X` | discard / reset selected file (with `[y/N]` confirmation) |
 | `c` | open commit editor |
 | `/` | enter slash-Command mode |
 | `r` | refresh status |

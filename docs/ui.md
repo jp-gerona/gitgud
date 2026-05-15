@@ -31,11 +31,13 @@ Two rows are conditional:
 - **Tab bar** — drawn only when `app.view.is_tabbed()` (i.e. Status or Log; not CommitEditor).
 - **Prompt bar** — drawn only when `app.prompt.is_some()` in a tabbed view.
 
-The status line is view- and mode-aware. Each branch returns a `Line`; if `app.error` is set, the error span wins over hints regardless of mode:
+The status line is view- and mode-aware. Each branch returns a `Line`. The precedence inside a tabbed view is **confirm > prompt > error > hints** — a pending confirmation always wins, because the user has to resolve it before doing anything else:
 
-- **Status view (Normal)** — `[1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [c] commit  [/] cmd  [r] refresh  [q] quit`.
+- **Confirm pending** — yellow `confirm` chip + the prompt text + `[y]` (red) yes / `[N]` (green) no.
+- **Status view (Normal)** — `[1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [X] discard  [c] commit  [/] cmd  [r] refresh  [q] quit`.
 - **Log view (Normal)** — `[1/2] tab  [j/k] move  [g/G] top/bottom  [/] cmd  [r] refresh  [q] quit`.
 - **Command mode** (either tabbed view) — `[Esc] back  [↑/↓] history  [Enter] run`.
+- **Error** — red `error` chip + message + `[Esc] dismiss`.
 - **CommitEditor view** — `[Ctrl+C] quit gitgud`. The editor draws its own mode label and hints panel inside the view area, so the global status line stays minimal.
 
 ## `ui::tab_bar`

@@ -52,6 +52,17 @@ pub struct App {
     pub commit_editor: CommitEditor,
     /// `Some` when the user is in slash-Command mode in a tabbed view.
     pub prompt: Option<Prompt>,
+    /// `Some` when a destructive op is awaiting `y/N` confirmation. While set,
+    /// all key input routes to the confirm handler.
+    pub confirm: Option<PendingConfirm>,
+}
+
+/// A pending destructive operation. The `prompt` is what the user sees; the
+/// `cmd` is what runs on `y`. Reusable beyond discard — same pattern will host
+/// branch-delete, stash-drop, etc. when those land.
+pub struct PendingConfirm {
+    pub prompt: String,
+    pub cmd: git::GitCmd,
 }
 
 impl App {
@@ -71,6 +82,7 @@ impl App {
             view: View::Status,
             commit_editor: CommitEditor::new(),
             prompt: None,
+            confirm: None,
         };
         app.refresh_status();
         Ok(app)
@@ -98,6 +110,13 @@ impl App {
         // Ctrl-C always quits, from any view including the prompt and editor.
         if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
             self.should_quit = true;
+            return;
+        }
+
+        // A pending confirmation swallows all input until resolved. Reusable
+        // across views — destructive ops set `confirm` and trust this gate.
+        if self.confirm.is_some() {
+            self.handle_confirm_key(k);
             return;
         }
 
@@ -148,6 +167,7 @@ impl App {
             Action::Refresh => self.refresh_status(),
             Action::StageSelected => self.stage_selected(),
             Action::UnstageSelected => self.unstage_selected(),
+            Action::DiscardSelected => self.discard_selected(),
             Action::Commit => self.open_commit_editor(),
             Action::Dismiss => self.error = None,
         }
@@ -164,6 +184,22 @@ impl App {
             KeyCode::Esc => self.error = None,
             _ => {}
         }
+    }
+
+    // --- confirmation ---------------------------------------------------
+
+    fn handle_confirm_key(&mut self, k: KeyEvent) {
+        // Only lowercase/uppercase `y` confirms — anything else cancels. This
+        // mirrors the bash `[y/N]` convention where the capital letter is the
+        // safe default.
+        let confirmed = matches!(k.code, KeyCode::Char('y') | KeyCode::Char('Y'));
+        let Some(pending) = self.confirm.take() else {
+            return;
+        };
+        if confirmed {
+            self.run_action(pending.cmd);
+        }
+        // Either way we clear; on cancel we keep `app.error` as-is.
     }
 
     // --- tab switching --------------------------------------------------
@@ -518,6 +554,47 @@ impl App {
                 .arg("--")
                 .arg(&path),
         );
+    }
+
+    /// `X` in Status view — queues a destructive op for `y/N` confirmation.
+    /// The behavior depends on which pane is focused and the file's status:
+    ///
+    /// | Pane | File status | Command |
+    /// |---|---|---|
+    /// | Unstaged | Untracked          | `git clean -fd -- <path>` (deletes the file from disk) |
+    /// | Unstaged | Modified / Deleted | `git restore -- <path>` (drops worktree edits) |
+    /// | Staged   | (any)              | `git restore --staged --worktree --source=HEAD -- <path>` (full reset for the file) |
+    fn discard_selected(&mut self) {
+        let Some(entry) = self.selected_entry() else {
+            return;
+        };
+        let path = entry.path.clone();
+
+        let (prompt, cmd) = match self.focused {
+            Pane::Unstaged => {
+                if matches!(entry.worktree, FileStatus::Untracked) {
+                    (
+                        format!("Delete untracked file '{path}'?"),
+                        git::GitCmd::new("clean").arg("-fd").arg("--").arg(&path),
+                    )
+                } else {
+                    (
+                        format!("Discard worktree changes to '{path}'?"),
+                        git::GitCmd::new("restore").arg("--").arg(&path),
+                    )
+                }
+            }
+            Pane::Staged => (
+                format!("Reset '{path}' to HEAD (drops staged + worktree changes)?"),
+                git::GitCmd::new("restore")
+                    .arg("--staged")
+                    .arg("--worktree")
+                    .arg("--source=HEAD")
+                    .arg("--")
+                    .arg(&path),
+            ),
+        };
+        self.confirm = Some(PendingConfirm { prompt, cmd });
     }
 
     fn run_action(&mut self, cmd: git::GitCmd) {

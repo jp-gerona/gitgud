@@ -31,6 +31,12 @@ pub struct App {
     pub view: View,
     pub commit_editor: CommitEditor,
     pub prompt: Option<Prompt>,          // Some while in slash-Command mode
+    pub confirm: Option<PendingConfirm>, // Some while awaiting y/N for a destructive op
+}
+
+pub struct PendingConfirm {
+    pub prompt: String,                  // shown in the status line
+    pub cmd: git::GitCmd,                // run on `y`
 }
 ```
 
@@ -58,6 +64,9 @@ A 200 ms poll keeps the UI responsive without busy-waiting; nothing time-based d
 ```
 handle_key(k)
 ├── Ctrl+C anywhere                   → should_quit = true
+├── confirm.is_some()                 → handle_confirm_key
+│                                        ├── y / Y → run_action(cmd)
+│                                        └── else  → cancel (clear confirm)
 ├── view == CommitEditor              → handle_commit_editor_key
 │                                        └── match commit_editor.mode
 │                                            ├── Normal  → handle_normal_mode_key
@@ -89,10 +98,32 @@ The Status view uses the [keymap/action](keymap-action.md) indirection in Normal
 | `Refresh` | `refresh_status` |
 | `StageSelected` | (Unstaged pane only) `git add -- <path>` via `run_action` |
 | `UnstageSelected` | (Staged pane only) `git restore --staged -- <path>` via `run_action` |
+| `DiscardSelected` | queues a `PendingConfirm` for the selected file — see [destructive ops](#destructive-ops-pendingconfirm) below |
 | `Commit` | `open_commit_editor` |
 | `Dismiss` | clear `error` |
 
 `run_action(cmd)` is the shared mutator: runs `cmd`, sets `error` on failure / clears on success, `refresh_status()`, and records the displayed command into history last (so the command bar reflects the user's action, not the implicit reload).
+
+## Destructive ops (`PendingConfirm`)
+
+A reusable pattern: a destructive handler doesn't execute its `GitCmd` directly; it sets `app.confirm = Some(PendingConfirm { prompt, cmd })`. The dispatcher then routes all subsequent keys to `handle_confirm_key` until the user resolves it.
+
+```
+discard_selected()
+  ├── Unstaged + Untracked          → cmd = git clean -fd -- <path>
+  ├── Unstaged + Modified/Deleted   → cmd = git restore -- <path>
+  └── Staged   (any)                → cmd = git restore --staged --worktree
+                                              --source=HEAD -- <path>
+  → app.confirm = Some(PendingConfirm { ... })
+
+handle_confirm_key(k)
+  ├── y / Y                         → run_action(pending.cmd); clear confirm
+  └── anything else (incl. Esc)     → clear confirm; no command runs
+```
+
+Slash-prompt destructive commands (e.g. `/git restore foo.rs`, `/git clean -fd foo.rs`) **bypass** the confirm — typing the command verbatim is itself the confirmation. The shortcut is the only path that goes through the `[y/N]` gate.
+
+Future destructive shortcuts (`X` on a branch row, `D` on a stash entry, …) reuse this same pattern by constructing a `PendingConfirm` with their own prompt + cmd. No new dispatch code needed.
 
 ## Log-view actions
 

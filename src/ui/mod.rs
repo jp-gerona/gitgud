@@ -66,6 +66,9 @@ fn status_line(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn status_view_hints(app: &App) -> Line<'_> {
+    if let Some(c) = &app.confirm {
+        return confirm_hints(&c.prompt);
+    }
     if app.prompt.is_some() {
         return prompt_hints();
     }
@@ -73,11 +76,14 @@ fn status_view_hints(app: &App) -> Line<'_> {
         return error_hints(err);
     }
     Line::from(
-        " [1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [c] commit  [/] cmd  [r] refresh  [q] quit ",
+        " [1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [X] discard  [c] commit  [/] cmd  [r] refresh  [q] quit ",
     )
 }
 
 fn log_view_hints(app: &App) -> Line<'_> {
+    if let Some(c) = &app.confirm {
+        return confirm_hints(&c.prompt);
+    }
     if app.prompt.is_some() {
         return prompt_hints();
     }
@@ -96,6 +102,22 @@ fn prompt_hints() -> Line<'static> {
         Span::raw("   "),
         Span::styled("[Enter] run", Style::default().fg(Color::DarkGray)),
         Span::raw(" "),
+    ])
+}
+
+fn confirm_hints(prompt: &str) -> Line<'_> {
+    Line::from(vec![
+        Span::styled(
+            " confirm ",
+            Style::default().bg(Color::Yellow).fg(Color::Black),
+        ),
+        Span::raw(" "),
+        Span::raw(prompt),
+        Span::raw("  "),
+        Span::styled("[y]", Style::default().fg(Color::Red)),
+        Span::raw(" yes / "),
+        Span::styled("[N]", Style::default().fg(Color::Green)),
+        Span::raw(" no (any other key cancels) "),
     ])
 }
 
