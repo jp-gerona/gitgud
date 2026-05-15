@@ -5,6 +5,7 @@ mod event;
 mod git;
 mod history;
 mod keymap;
+mod prompt;
 mod ui;
 
 use anyhow::Result;

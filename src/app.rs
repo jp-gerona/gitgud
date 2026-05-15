@@ -4,6 +4,7 @@ use crate::event::{self, AppEvent};
 use crate::git::{self, FileStatus};
 use crate::history::History;
 use crate::keymap;
+use crate::prompt::{self, Prompt};
 use crate::ui;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -36,6 +37,8 @@ pub struct App {
     pub error: Option<String>,
     pub view: View,
     pub commit_editor: CommitEditor,
+    /// `Some` when the user is in slash-Command mode in the Status view.
+    pub prompt: Option<Prompt>,
 }
 
 impl App {
@@ -51,6 +54,7 @@ impl App {
             error: None,
             view: View::Status,
             commit_editor: CommitEditor::new(),
+            prompt: None,
         };
         app.refresh_status();
         Ok(app)
@@ -82,6 +86,17 @@ impl App {
     }
 
     fn handle_status_key(&mut self, k: KeyEvent) {
+        if self.prompt.is_some() {
+            self.handle_prompt_key(k);
+            return;
+        }
+        // `/` enters Command mode. Checked here (not in keymap) so the keymap
+        // table stays focused on Normal-mode shortcuts.
+        if k.modifiers.is_empty() && k.code == KeyCode::Char('/') {
+            self.prompt = Some(Prompt::new());
+            self.error = None;
+            return;
+        }
         let Some(action) = keymap::key_to_action(k) else {
             return;
         };
@@ -101,6 +116,97 @@ impl App {
             Action::Commit => self.open_commit_editor(),
             Action::Dismiss => self.error = None,
         }
+    }
+
+    // --- command-mode prompt --------------------------------------------
+
+    fn handle_prompt_key(&mut self, k: KeyEvent) {
+        // Ctrl-C always quits gitgud, even from the prompt.
+        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
+        }
+        let Some(p) = self.prompt.as_mut() else {
+            return;
+        };
+        match k.code {
+            KeyCode::Esc => {
+                self.prompt = None;
+            }
+            KeyCode::Enter => {
+                let raw = p.submit();
+                self.dispatch_prompt(raw);
+            }
+            KeyCode::Backspace => p.backspace(),
+            KeyCode::Delete => p.delete_at_cursor(),
+            KeyCode::Left => p.move_left(),
+            KeyCode::Right => p.move_right(),
+            KeyCode::Home => p.move_home(),
+            KeyCode::End => p.move_end(),
+            KeyCode::Up => p.recall_prev(),
+            KeyCode::Down => p.recall_next(),
+            KeyCode::Char(c) => p.insert_char(c),
+            _ => {}
+        }
+    }
+
+    /// Parse and route a submitted prompt buffer (without the leading `/`).
+    ///
+    /// Rules:
+    /// - blank → no-op
+    /// - first token must be `git` — anything else is an unknown slash command
+    /// - `git commit` with no `-m`/`-F`/`--message`/`--file` opens the modal
+    ///   commit editor (would otherwise spawn `$EDITOR`)
+    /// - `git rebase -i` (and `--interactive`) is rejected until a rebase view
+    ///   ships
+    /// - everything else is built into a `GitCmd` and run via `run_action`
+    fn dispatch_prompt(&mut self, raw: String) {
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            // Stay in Command mode with an empty buffer ready for the next command.
+            return;
+        }
+        let args = prompt::shell_split(trimmed);
+        if args.is_empty() {
+            return;
+        }
+        if args[0] != "git" {
+            self.error = Some(format!(
+                "unknown command: /{trimmed} (commands must start with `git`)"
+            ));
+            return;
+        }
+        let rest = &args[1..];
+        if rest.is_empty() {
+            self.error = Some("missing git subcommand (e.g. /git status)".into());
+            return;
+        }
+        let sub = rest[0].as_str();
+        let tail = &rest[1..];
+
+        if sub == "commit" && !has_commit_message_flag(tail) {
+            // Route to the modal editor; prompt session is over.
+            self.prompt = None;
+            self.open_commit_editor();
+            return;
+        }
+        if sub == "rebase" && tail.iter().any(|a| a == "-i" || a == "--interactive") {
+            self.error = Some("interactive rebase is not yet supported".into());
+            return;
+        }
+        if sub == "add" && tail.iter().any(|a| a == "-p" || a == "--patch") {
+            self.error = Some("interactive `add -p` is not yet supported".into());
+            return;
+        }
+
+        let mut cmd = git::GitCmd::new(sub);
+        for a in tail {
+            cmd = cmd.arg(a.as_str());
+        }
+        self.run_action(cmd);
+        // Stay in Command mode for rapid-fire input. Errors land in `self.error`
+        // and render above the prompt; success is implicit via the refreshed
+        // panes and command bar.
     }
 
     // --- commit editor ---------------------------------------------------
@@ -227,8 +333,7 @@ impl App {
     fn open_commit_editor(&mut self) {
         if self.status.staged().count() == 0 {
             self.error = Some(
-                "nothing staged to commit (press 's' on an unstaged file, [Esc] to dismiss)"
-                    .into(),
+                "nothing staged to commit (press 's' on an unstaged file, [Esc] to dismiss)".into(),
             );
             return;
         }
@@ -379,7 +484,10 @@ impl App {
                 .arg("/dev/null")
                 .arg(&path)
         } else if cached {
-            git::GitCmd::new("diff").arg("--cached").arg("--").arg(&path)
+            git::GitCmd::new("diff")
+                .arg("--cached")
+                .arg("--")
+                .arg(&path)
         } else {
             git::GitCmd::new("diff").arg("--").arg(&path)
         };
@@ -402,6 +510,22 @@ impl App {
     pub fn last_command(&self) -> Option<&str> {
         self.history.last()
     }
+}
+
+/// Whether `git commit` args include a flag that supplies the message inline.
+/// Anything without one would normally drop git into `$EDITOR`, which would
+/// fight our raw-mode terminal — so we route those to the modal editor.
+fn has_commit_message_flag(args: &[String]) -> bool {
+    args.iter().any(|a| {
+        a == "-m"
+            || a == "-F"
+            || a == "--message"
+            || a == "--file"
+            || a.starts_with("--message=")
+            || a.starts_with("--file=")
+            // Short clustered forms like `-mfoo` or `-Ffoo`.
+            || (a.len() > 2 && (a.starts_with("-m") || a.starts_with("-F")))
+    })
 }
 
 fn clamp_sel(sel: usize, len: usize) -> usize {

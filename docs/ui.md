@@ -18,14 +18,24 @@ ui::draw splits the frame vertically:
 ├──────────────────────────────────────────┤
 │  $ git ...                  (1 row)      │   — command_bar::draw
 ├──────────────────────────────────────────┤
+│  /git █                     (1 row)      │   — prompt_bar::draw, ONLY when
+│                                          │     app.prompt.is_some() (Status view)
+├──────────────────────────────────────────┤
 │  [Tab] pane ...             (1 row)      │   — status_line (in ui::mod)
 └──────────────────────────────────────────┘
 ```
 
-The bottom status line is view-aware:
+The prompt row is only inserted in Command mode; in Normal mode the bottom region is two rows. The status line is view- and mode-aware:
 
-- **Status view** — if `app.error.is_some()`, show the error + `[Esc] dismiss` hint; else show the keybind row.
+- **Status view (Normal)** — if `app.error.is_some()`, show the error + `[Esc] dismiss` hint; else show the keybind row including `[/] cmd`.
+- **Status view (Command mode)** — show `[Esc] back  [↑/↓] history  [Enter] run`. A persistent `app.error` from a prior dispatch is preferred over the hints until cleared.
 - **CommitEditor view** — show only `[Ctrl+C] quit gitgud`. The editor renders its own mode label and hints panel inside the view area, so the global status line stays minimal.
+
+## `ui::prompt_bar`
+
+Renders the slash-Command prompt: a cyan-bold `/` followed by the buffer chars from `app.prompt`. Positions the terminal cursor at the buffer's char-cursor offset (Unicode-safe; `cursor` is a char index). Pure function of `&App` — no state of its own.
+
+The widget is only invoked when `app.prompt.is_some()` and the active view is `Status`; `ui::draw` allocates an extra 1-row slot above the status line for it in that case.
 
 ## `ui::command_bar`
 
@@ -111,4 +121,5 @@ Only one terminal cursor exists per frame; `Frame::set_cursor_position` is calle
 
 - [`app`](app.md) — owns the state being rendered
 - [`commit_editor`](commit-editor.md) — state behind `views::commit`
+- [`prompt`](prompt.md) — state behind `prompt_bar`
 - [`git::status`](git-status.md) — data behind `views::status`

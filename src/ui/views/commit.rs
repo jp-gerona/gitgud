@@ -77,9 +77,7 @@ fn render_line(row: usize, line: &str) -> Line<'static> {
     if total > warn_end {
         spans.push(Span::styled(
             chars[warn_end..].iter().collect::<String>(),
-            Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
+            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
         ));
     }
     Line::from(spans)
@@ -89,7 +87,9 @@ fn draw_vim_status_line(f: &mut Frame, area: Rect, ed: &CommitEditor) {
     let line = if let Some(msg) = &ed.status_message {
         Line::from(vec![Span::styled(
             format!(" {msg} "),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
         )])
     } else {
         match &ed.mode {
@@ -148,7 +148,9 @@ fn draw_hints(f: &mut Frame, area: Rect, mode: &EditorMode) {
         EditorMode::Insert => (
             " INSERT mode ",
             vec![
-                Line::from("Type to insert text.  Enter for newline.  Arrows / Home / End / Backspace / Delete to edit."),
+                Line::from(
+                    "Type to insert text.  Enter for newline.  Arrows / Home / End / Backspace / Delete to edit.",
+                ),
                 Line::from(vec![
                     Span::styled("Esc ", bold),
                     Span::raw("returns to NORMAL mode."),
@@ -184,7 +186,9 @@ fn draw_hints(f: &mut Frame, area: Rect, mode: &EditorMode) {
         .border_style(Style::default().fg(theme::DIM_BORDER))
         .title(title);
     f.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -202,8 +206,7 @@ fn place_cursor(f: &mut Frame, ed: &CommitEditor, editor_inner: Rect, status_are
         _ => {
             let cx = editor_inner.x + ed.col as u16;
             let cy = editor_inner.y + ed.row as u16;
-            if cx < editor_inner.x + editor_inner.width
-                && cy < editor_inner.y + editor_inner.height
+            if cx < editor_inner.x + editor_inner.width && cy < editor_inner.y + editor_inner.height
             {
                 f.set_cursor_position(Position::new(cx, cy));
             }

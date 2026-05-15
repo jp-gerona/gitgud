@@ -116,7 +116,9 @@ fn draw_diff(f: &mut Frame, area: Rect, app: &App) {
         app.diff.lines().map(diff_line).collect()
     };
 
-    let p = Paragraph::new(lines).block(block).wrap(Wrap { trim: false });
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false });
     f.render_widget(p, area);
 }
 

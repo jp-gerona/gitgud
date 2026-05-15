@@ -28,6 +28,7 @@ src/
 ├── action.rs            ✓ Action enum (Stage, Unstage, Commit, ...)
 ├── keymap.rs            ✓ (view, key) → Action table
 ├── commit_editor.rs     ✓ in-TUI multiline editor state for commit messages
+├── prompt.rs            ✓ slash-Command prompt state (buffer, cursor, history) + shell_split
 ├── editor.rs            ○ suspend TUI to run commands that take over the terminal ($EDITOR) — for future rebase
 ├── git/
 │   ├── mod.rs           ✓ GitCmd builder
@@ -41,6 +42,7 @@ src/
     ├── mod.rs           ✓ top-level draw, status line
     ├── theme.rs         ✓ colors & symbols
     ├── command_bar.rs   ✓ shows last/current `git ...` (the teaching surface)
+    ├── prompt_bar.rs    ✓ one-row slash prompt + terminal cursor
     ├── help.rs          ○ contextual keybind overlay
     └── views/
         ├── mod.rs       ✓

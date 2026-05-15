@@ -6,7 +6,10 @@ Sources: [`src/action.rs`](../src/action.rs), [`src/keymap.rs`](../src/keymap.rs
 
 A typed-intent layer between raw `KeyEvent`s and the App's state mutations. Keys go through `keymap::key_to_action` to produce an `Action`; the App matches on the `Action`. This indirection makes intent explicit and gives a single place to remap keys later (per-user config, per-view bindings) without touching the handlers.
 
-**Scope:** the keymap/action layer only handles the Status view. The commit editor's modal context (Normal/Insert/Command + pending operators like `gg`/`dd`) makes a generic Action table awkward, so its keys are dispatched inline in [`app.rs`](app.md).
+**Scope:** the keymap/action layer only handles the Status view in **Normal mode**. Two things bypass it:
+
+- **The commit editor** — its modal context (Normal/Insert/Command + pending operators like `gg`/`dd`) makes a generic Action table awkward, so keys are dispatched inline in [`app.rs`](app.md).
+- **The slash prompt** — when `app.prompt.is_some()`, every keystroke is character input into the [`prompt`](prompt.md) buffer (or a control key like `Esc`/`Enter`/`↑`). The keymap is bypassed entirely. `/` is also checked in `handle_status_key` *before* the keymap call, so it isn't a regular `Action` — the keymap table stays clean of mode-entry keys.
 
 ## `Action`
 

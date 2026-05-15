@@ -62,5 +62,7 @@ impl GitCmd {
 }
 
 fn needs_quoting(s: &str) -> bool {
-    s.is_empty() || s.chars().any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '$' | '`' | '\\'))
+    s.is_empty()
+        || s.chars()
+            .any(|c| c.is_whitespace() || matches!(c, '\'' | '"' | '$' | '`' | '\\'))
 }

@@ -23,6 +23,7 @@ pub struct App {
     pub error: Option<String>,           // status-view errors only
     pub view: View,
     pub commit_editor: CommitEditor,
+    pub prompt: Option<Prompt>,          // Some while in slash-Command mode
 }
 ```
 
@@ -47,8 +48,11 @@ A 200 ms poll keeps the UI responsive without busy-waiting; nothing time-based d
 
 ```
 handle_key(k)
-├── view == Status         → handle_status_key
-│                             └── keymap::key_to_action → match Action
+├── view == Status
+│     ├── prompt.is_some()    → handle_prompt_key
+│     │                         └── Enter → dispatch_prompt → build GitCmd → run_action
+│     ├── key == '/'          → open prompt
+│     └── else                → keymap::key_to_action → match Action
 └── view == CommitEditor   → handle_commit_editor_key
                               ├── Ctrl-C → quit gitgud
                               └── match commit_editor.mode
@@ -57,7 +61,7 @@ handle_key(k)
                                   └── Command → handle_command_mode_key
 ```
 
-The Status view uses the [keymap/action](keymap-action.md) indirection. The commit editor handlers are inline because the modal context (and `pending_op`) make a generic Action-based table awkward.
+The Status view uses the [keymap/action](keymap-action.md) indirection in Normal mode. When the slash prompt is open the keymap is bypassed entirely — every keypress is character input until `Esc`. The commit editor handlers are inline because the modal context (and `pending_op`) make a generic Action-based table awkward.
 
 ## Status-view actions
 
@@ -73,6 +77,30 @@ The Status view uses the [keymap/action](keymap-action.md) indirection. The comm
 | `Dismiss` | clear `error` |
 
 `run_action(cmd)` is the shared mutator: runs `cmd`, sets `error` on failure / clears on success, `refresh_status()`, and records the displayed command into history last (so the command bar reflects the user's action, not the implicit reload).
+
+## Slash-Command prompt lifecycle
+
+```
+Status (Normal)
+  ├── '/'                → prompt = Some(Prompt::new())
+  └── handle_prompt_key
+        ├── Esc          → prompt = None
+        ├── Ctrl-C       → quit gitgud
+        ├── Enter        → dispatch_prompt(raw)
+        ├── ↑/↓          → recall_prev / recall_next
+        └── chars/edits  → mutate the buffer
+
+dispatch_prompt(raw)
+  ├── empty                                  → no-op (stay in Command mode)
+  ├── first token != "git"                   → app.error = "unknown command: /…"
+  ├── "git" with no subcommand               → app.error = "missing git subcommand"
+  ├── "git commit" (no -m/-F/--message/--file) → prompt = None, open_commit_editor()
+  ├── "git rebase -i" / "--interactive"      → app.error = "interactive rebase not yet supported"
+  ├── "git add -p" / "--patch"               → app.error = "interactive `add -p` not yet supported"
+  └── else                                   → build GitCmd from rest, run_action(cmd)
+```
+
+After a normal run the prompt stays open with an empty buffer (rapid-fire). Errors land in `app.error`, which renders **above** the prompt row in the status line — the user can keep typing or `↑` to recall and fix. Only the editor-takeover branch closes the prompt (because it's switching to a different view).
 
 ## Commit editor lifecycle
 
@@ -105,4 +133,5 @@ If interactive rebase eventually lands, the suspend path will need to thread `te
 - [`event`](event.md) — source of input
 - [`keymap` / `action`](keymap-action.md) — Status-view dispatch table
 - [`commit_editor`](commit-editor.md) — state owned by `App`
+- [`prompt`](prompt.md) — state behind the slash-Command mode
 - [`ui`](ui.md) — pure render of `App` per frame

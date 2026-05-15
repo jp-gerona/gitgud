@@ -8,6 +8,7 @@ gitgud helps you *do* git in the terminal while *learning* it — every action s
 
 - **Status view** — staged / unstaged / untracked panes with a live diff preview.
 - **One-key stage / unstage** — `s` / `u` show the exact `git add --` and `git restore --staged --` they run.
+- **Slash Command mode** — press `/` to drop into a prompt and type real git commands (`/git status`, `/git add foo`, `/git commit -m "wip"`), with ↑/↓ history recall.
 - **Teaching command bar** — every executed `git ...` rendered copy-pasteable at the bottom.
 - **Modal commit editor** — vi-style Normal / Insert / Command modes (`i a I A o O`, `h j k l w b 0 $ gg G`, `x dd dw D`, `:w :wq :x :q :q!`) with a mode-aware hints panel.
 - **Live subject/body warnings** — subject line goes yellow at 50 chars and red at 72.
@@ -33,7 +34,7 @@ Or run from source: `cargo run` inside any git repository.
 ## Tests
 
 ```sh
-cargo test                                  # 29 unit tests
+cargo test                                  # 45 unit tests
 cargo clippy --all-targets -- -D warnings
 cargo fmt -- --check
 ```
@@ -49,9 +50,23 @@ cargo fmt -- --check
 | `s` | stage selected file |
 | `u` | unstage selected file |
 | `c` | open commit editor |
+| `/` | enter slash-Command mode |
 | `r` | refresh status |
 | `Esc` | dismiss error |
 | `q` / `Ctrl+C` | quit |
+
+### Command mode (slash prompt)
+
+| Key | Action |
+|---|---|
+| `Enter` | run the typed command (must start with `git`) |
+| `Esc` | leave Command mode |
+| `↑` / `↓` | recall previous / next submitted command |
+| `←` `→` `Home` `End` | move cursor inside the buffer |
+| `Backspace` / `Delete` | edit the buffer |
+| `Ctrl+C` | quit gitgud |
+
+`/git commit` with no `-m`/`-F` routes to the modal editor. `/git rebase -i` and `/git add -p` are rejected until those views ship.
 
 ### Commit editor
 
@@ -70,6 +85,7 @@ Module-by-module deep dives live in [`docs/`](docs/):
 - [Process runner](docs/git-runner.md)
 - [Status parser](docs/git-status.md)
 - [Commit editor](docs/commit-editor.md)
+- [Slash prompt](docs/prompt.md)
 - [App state & dispatch](docs/app.md)
 - [UI layer](docs/ui.md)
 - [Keymap & actions](docs/keymap-action.md)

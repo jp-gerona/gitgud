@@ -17,6 +17,7 @@ src/
 ├── keymap.rs         — key → Action mapping (Status view only)
 ├── history.rs        — bounded ring buffer of executed git commands
 ├── commit_editor.rs  — modal vi-style editor state
+├── prompt.rs         — slash-Command prompt state + shell tokenizer
 ├── git/
 │   ├── mod.rs        — GitCmd builder (the choke point for git calls)
 │   ├── runner.rs     — process spawning: run / run_with_stdin
@@ -25,6 +26,7 @@ src/
     ├── mod.rs        — top-level draw + bottom hint/error line
     ├── theme.rs      — color constants
     ├── command_bar.rs— renders the most recent `git ...` from history
+    ├── prompt_bar.rs — slash-Command prompt strip + terminal cursor
     └── views/
         ├── status.rs — staged / unstaged / diff panes
         └── commit.rs — modal vi editor + status row + hints
@@ -36,7 +38,10 @@ src/
 KeyEvent
   → event::poll
     → App::handle_key
-        ├── View::Status         → keymap::key_to_action → match Action
+        ├── View::Status
+        │     ├── prompt.is_some() → handle_prompt_key → (Enter) dispatch_prompt
+        │     │                                          → build GitCmd → run_action
+        │     └── else            → keymap::key_to_action → match Action
         └── View::CommitEditor   → match commit_editor.mode
                                    ├── Normal  → handle_normal_mode_key
                                    ├── Insert  → handle_insert_mode_key
