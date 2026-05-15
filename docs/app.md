@@ -9,8 +9,12 @@ Owns all mutable state, runs the main loop, and dispatches input to the correct 
 ## Structs and enums
 
 ```rust
-pub enum Pane    { Unstaged, Staged }
-pub enum View    { Status, CommitEditor }
+pub enum Pane { Unstaged, Staged }
+pub enum View {
+    Status,
+    Log,
+    CommitEditor,    // modal — bypasses tab bar and per-tab dispatch
+}
 
 pub struct App {
     pub status: git::StatusList,         // last loaded `git status` snapshot
@@ -18,14 +22,19 @@ pub struct App {
     pub unstaged_selected: usize,
     pub staged_selected: usize,
     pub diff: String,                    // diff for the currently-selected file
+    pub log: git::LogList,               // last loaded `git log` snapshot
+    pub log_selected: usize,
+    pub log_detail: String,              // `git show --stat <sha>` for the selected commit
     pub history: History,                // ring buffer feeding the command bar
     pub should_quit: bool,
-    pub error: Option<String>,           // status-view errors only
+    pub error: Option<String>,           // status/log error surface (not commit editor)
     pub view: View,
     pub commit_editor: CommitEditor,
     pub prompt: Option<Prompt>,          // Some while in slash-Command mode
 }
 ```
+
+`View::is_tabbed()` returns true for `Status | Log`. The UI uses this to decide whether to render the tab bar and the bottom hint row vs. the full-screen commit editor.
 
 `App::new()` constructs the default state and immediately calls `refresh_status()` so the first frame has populated panes.
 
@@ -48,20 +57,27 @@ A 200 ms poll keeps the UI responsive without busy-waiting; nothing time-based d
 
 ```
 handle_key(k)
-├── view == Status
-│     ├── prompt.is_some()    → handle_prompt_key
-│     │                         └── Enter → dispatch_prompt → build GitCmd → run_action
-│     ├── key == '/'          → open prompt
-│     └── else                → keymap::key_to_action → match Action
-└── view == CommitEditor   → handle_commit_editor_key
-                              ├── Ctrl-C → quit gitgud
-                              └── match commit_editor.mode
-                                  ├── Normal  → handle_normal_mode_key
-                                  ├── Insert  → handle_insert_mode_key
-                                  └── Command → handle_command_mode_key
+├── Ctrl+C anywhere                   → should_quit = true
+├── view == CommitEditor              → handle_commit_editor_key
+│                                        └── match commit_editor.mode
+│                                            ├── Normal  → handle_normal_mode_key
+│                                            ├── Insert  → handle_insert_mode_key
+│                                            └── Command → handle_command_mode_key
+└── tabbed view (Status | Log)
+      ├── prompt.is_some()             → handle_prompt_key
+      │                                  └── Enter → dispatch_prompt
+      │                                              ├── /exit, /quit
+      │                                              ├── /git log / status   → switch_view
+      │                                              ├── /git commit no -m   → open_commit_editor
+      │                                              └── /git ...            → run_action
+      ├── key == '/'                   → open prompt
+      ├── tab key (1, 2, [, ])         → switch_view
+      └── per-view dispatch
+            ├── View::Status → handle_status_normal_key → keymap → match Action
+            └── View::Log    → handle_log_normal_key (inline)
 ```
 
-The Status view uses the [keymap/action](keymap-action.md) indirection in Normal mode. When the slash prompt is open the keymap is bypassed entirely — every keypress is character input until `Esc`. The commit editor handlers are inline because the modal context (and `pending_op`) make a generic Action-based table awkward.
+The Status view uses the [keymap/action](keymap-action.md) indirection in Normal mode. Log is inline because its handler is small (≤ 7 keys) and Status-specific actions like `SwitchPane` / `StageSelected` don't translate. When the slash prompt is open the keymap is bypassed entirely — every keypress is character input until `Esc`. The commit editor handlers are inline because the modal context (and `pending_op`) make a generic Action-based table awkward.
 
 ## Status-view actions
 
@@ -77,6 +93,34 @@ The Status view uses the [keymap/action](keymap-action.md) indirection in Normal
 | `Dismiss` | clear `error` |
 
 `run_action(cmd)` is the shared mutator: runs `cmd`, sets `error` on failure / clears on success, `refresh_status()`, and records the displayed command into history last (so the command bar reflects the user's action, not the implicit reload).
+
+## Log-view actions
+
+| Key | Behavior |
+|---|---|
+| `j` / `↓` | `move_log_selection(1)` → clamp + `refresh_log_detail` |
+| `k` / `↑` | `move_log_selection(-1)` |
+| `g` | jump to first commit (`i32::MIN` sentinel) |
+| `G` | jump to last commit (`i32::MAX` sentinel) |
+| `r` | `refresh_log` |
+| `q` / `Ctrl+C` | quit |
+| `Esc` | clear `error` |
+
+`refresh_log` runs `git log --pretty=format:... -n 200`, parses, and re-runs `refresh_log_detail` for the new selection. `refresh_log_detail` runs `git show --stat <sha>` for the currently selected commit.
+
+## Tab switching
+
+```
+switch_view(target: View)
+├── if target == self.view → no-op
+└── else
+    ├── self.view = target
+    └── refresh the target view's data:
+        ├── Status → refresh_status
+        └── Log    → refresh_log
+```
+
+Refresh-on-switch keeps tab labels accurate (counts) and content current. The cost is small — a `git status` or `git log -n 200` typically returns in under 100 ms.
 
 ## Slash-Command prompt lifecycle
 
@@ -134,4 +178,6 @@ If interactive rebase eventually lands, the suspend path will need to thread `te
 - [`keymap` / `action`](keymap-action.md) — Status-view dispatch table
 - [`commit_editor`](commit-editor.md) — state owned by `App`
 - [`prompt`](prompt.md) — state behind the slash-Command mode
+- [`git::log`](git-log.md) — parser feeding `App.log`
+- [Log view](log-view.md) — render layer for the Log tab
 - [`ui`](ui.md) — pure render of `App` per frame

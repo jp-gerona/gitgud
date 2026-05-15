@@ -11,25 +11,42 @@ The render layer. Pure functions of `&App`: no state, no side effects beyond wri
 ```
 ui::draw splits the frame vertically:
 ┌──────────────────────────────────────────┐
+│  1.Status (3)  2.Log (52)   (1 row)      │   — tab_bar::draw, ONLY on tabbed views
+├──────────────────────────────────────────┤
 │                                          │
-│        active view (Min(0))              │   — views::status::draw
-│                                          │     or views::commit::draw
+│        active view (Min(0))              │   — views::status / views::log
+│                                          │     or views::commit (full-screen modal)
 │                                          │
 ├──────────────────────────────────────────┤
 │  $ git ...                  (1 row)      │   — command_bar::draw
 ├──────────────────────────────────────────┤
-│  /git █                     (1 row)      │   — prompt_bar::draw, ONLY when
-│                                          │     app.prompt.is_some() (Status view)
+│  /git █                     (1 row)      │   — prompt_bar::draw, ONLY in Command mode
 ├──────────────────────────────────────────┤
-│  [Tab] pane ...             (1 row)      │   — status_line (in ui::mod)
+│  [1/2] tab ...              (1 row)      │   — status_line (in ui::mod)
 └──────────────────────────────────────────┘
 ```
 
-The prompt row is only inserted in Command mode; in Normal mode the bottom region is two rows. The status line is view- and mode-aware:
+Two rows are conditional:
 
-- **Status view (Normal)** — if `app.error.is_some()`, show the error + `[Esc] dismiss` hint; else show the keybind row including `[/] cmd`.
-- **Status view (Command mode)** — show `[Esc] back  [↑/↓] history  [Enter] run`. A persistent `app.error` from a prior dispatch is preferred over the hints until cleared.
-- **CommitEditor view** — show only `[Ctrl+C] quit gitgud`. The editor renders its own mode label and hints panel inside the view area, so the global status line stays minimal.
+- **Tab bar** — drawn only when `app.view.is_tabbed()` (i.e. Status or Log; not CommitEditor).
+- **Prompt bar** — drawn only when `app.prompt.is_some()` in a tabbed view.
+
+The status line is view- and mode-aware. Each branch returns a `Line`; if `app.error` is set, the error span wins over hints regardless of mode:
+
+- **Status view (Normal)** — `[1/2] tab  [Tab] pane  [j/k] move  [s] stage  [u] unstage  [c] commit  [/] cmd  [r] refresh  [q] quit`.
+- **Log view (Normal)** — `[1/2] tab  [j/k] move  [g/G] top/bottom  [/] cmd  [r] refresh  [q] quit`.
+- **Command mode** (either tabbed view) — `[Esc] back  [↑/↓] history  [Enter] run`.
+- **CommitEditor view** — `[Ctrl+C] quit gitgud`. The editor draws its own mode label and hints panel inside the view area, so the global status line stays minimal.
+
+## `ui::tab_bar`
+
+Renders the top-row tab strip. Each tab is `<N>.<Label> (<count>)`:
+
+- `<N>` is the keystroke to switch (1-indexed).
+- `<count>` is `app.status.entries.len()` for Status (total distinct files) and `app.log.len()` for Log. Omitted when the count is unknown / not yet loaded.
+- Active tab style: `FOCUS_BORDER` (cyan) + bold + reversed background. Inactive: dark gray. The reversed-bg trick gives a "raised chip" look without a border.
+
+Tab order is hard-coded in `TABS` constant — currently `[Status, Log]`. To add a tab, append here and add a number key in `App::try_handle_tab_key`.
 
 ## `ui::prompt_bar`
 
@@ -123,3 +140,5 @@ Only one terminal cursor exists per frame; `Frame::set_cursor_position` is calle
 - [`commit_editor`](commit-editor.md) — state behind `views::commit`
 - [`prompt`](prompt.md) — state behind `prompt_bar`
 - [`git::status`](git-status.md) — data behind `views::status`
+- [`git::log`](git-log.md) — data behind `views::log`
+- [Log view deep dive](log-view.md) — layout, row rendering, ref chip colors

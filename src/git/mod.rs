@@ -1,9 +1,11 @@
+pub mod log;
 pub mod runner;
 pub mod status;
 
 use std::ffi::OsString;
 use std::path::PathBuf;
 
+pub use log::{LogEntry, LogList};
 pub use status::{FileEntry, FileStatus, StatusList};
 
 /// Builder for a `git ...` invocation.

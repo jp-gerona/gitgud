@@ -34,20 +34,22 @@ src/
 │   ├── mod.rs           ✓ GitCmd builder
 │   ├── runner.rs        ✓ spawn + capture stdout/stderr/status
 │   ├── status.rs        ✓ parse `git status --porcelain=v1 -z`
+│   ├── log.rs           ✓ parse `git log --pretty=format:...` + `git show --stat`
 │   ├── diff.rs          ○ hunk-level parsing for stage-by-hunk
-│   ├── log.rs           ○ parse `git log --pretty=format:...`
 │   ├── branch.rs        ○ `git branch -vv`, current, upstream
 │   └── rebase.rs        ○ interactive rebase via GIT_SEQUENCE_EDITOR
 └── ui/
-    ├── mod.rs           ✓ top-level draw, status line
+    ├── mod.rs           ✓ top-level draw, tab bar inclusion, status line
     ├── theme.rs         ✓ colors & symbols
     ├── command_bar.rs   ✓ shows last/current `git ...` (the teaching surface)
     ├── prompt_bar.rs    ✓ one-row slash prompt + terminal cursor
+    ├── tab_bar.rs       ✓ top-row tab strip with live counts
     ├── help.rs          ○ contextual keybind overlay
     └── views/
         ├── mod.rs       ✓
         ├── status.rs    ✓ staged/unstaged/diff
-        ├── log.rs       ○
+        ├── log.rs       ✓ commit list + `git show --stat` detail
+        ├── commit.rs    ✓ modal commit editor
         ├── branches.rs  ○
         └── stash.rs     ○
 ```

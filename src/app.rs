@@ -23,7 +23,17 @@ pub enum Pane {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum View {
     Status,
+    Log,
     CommitEditor,
+}
+
+impl View {
+    /// True for "tabbed" views — anything other than the modal commit editor.
+    /// Tab bar, command bar, status hints render on tabbed views; the commit
+    /// editor takes over the full content area.
+    pub fn is_tabbed(self) -> bool {
+        matches!(self, View::Status | View::Log)
+    }
 }
 
 pub struct App {
@@ -32,12 +42,15 @@ pub struct App {
     pub unstaged_selected: usize,
     pub staged_selected: usize,
     pub diff: String,
+    pub log: git::LogList,
+    pub log_selected: usize,
+    pub log_detail: String,
     pub history: History,
     pub should_quit: bool,
     pub error: Option<String>,
     pub view: View,
     pub commit_editor: CommitEditor,
-    /// `Some` when the user is in slash-Command mode in the Status view.
+    /// `Some` when the user is in slash-Command mode in a tabbed view.
     pub prompt: Option<Prompt>,
 }
 
@@ -49,6 +62,9 @@ impl App {
             unstaged_selected: 0,
             staged_selected: 0,
             diff: String::new(),
+            log: git::LogList::default(),
+            log_selected: 0,
+            log_detail: String::new(),
             history: History::default(),
             should_quit: false,
             error: None,
@@ -79,24 +95,43 @@ impl App {
     }
 
     fn handle_key(&mut self, k: KeyEvent) {
-        match self.view {
-            View::Status => self.handle_status_key(k),
-            View::CommitEditor => self.handle_commit_editor_key(k),
+        // Ctrl-C always quits, from any view including the prompt and editor.
+        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
+            self.should_quit = true;
+            return;
         }
-    }
 
-    fn handle_status_key(&mut self, k: KeyEvent) {
+        if matches!(self.view, View::CommitEditor) {
+            self.handle_commit_editor_key(k);
+            return;
+        }
+
+        // Tabbed views (Status, Log). Prompt mode swallows all input.
         if self.prompt.is_some() {
             self.handle_prompt_key(k);
             return;
         }
-        // `/` enters Command mode. Checked here (not in keymap) so the keymap
-        // table stays focused on Normal-mode shortcuts.
+
+        // `/` enters slash-Command mode in any tabbed view.
         if k.modifiers.is_empty() && k.code == KeyCode::Char('/') {
             self.prompt = Some(Prompt::new());
             self.error = None;
             return;
         }
+
+        // Tab-bar navigation (works on any tabbed view, Normal mode).
+        if self.try_handle_tab_key(k) {
+            return;
+        }
+
+        match self.view {
+            View::Status => self.handle_status_normal_key(k),
+            View::Log => self.handle_log_normal_key(k),
+            View::CommitEditor => {}
+        }
+    }
+
+    fn handle_status_normal_key(&mut self, k: KeyEvent) {
         let Some(action) = keymap::key_to_action(k) else {
             return;
         };
@@ -118,14 +153,69 @@ impl App {
         }
     }
 
+    fn handle_log_normal_key(&mut self, k: KeyEvent) {
+        match k.code {
+            KeyCode::Char('q') => self.should_quit = true,
+            KeyCode::Char('j') | KeyCode::Down => self.move_log_selection(1),
+            KeyCode::Char('k') | KeyCode::Up => self.move_log_selection(-1),
+            KeyCode::Char('g') => self.move_log_selection(i32::MIN),
+            KeyCode::Char('G') => self.move_log_selection(i32::MAX),
+            KeyCode::Char('r') => self.refresh_log(),
+            KeyCode::Esc => self.error = None,
+            _ => {}
+        }
+    }
+
+    // --- tab switching --------------------------------------------------
+
+    fn try_handle_tab_key(&mut self, k: KeyEvent) -> bool {
+        if !k.modifiers.is_empty() {
+            return false;
+        }
+        let target = match k.code {
+            KeyCode::Char('1') => Some(View::Status),
+            KeyCode::Char('2') => Some(View::Log),
+            KeyCode::Char(']') => Some(self.next_tab()),
+            KeyCode::Char('[') => Some(self.prev_tab()),
+            _ => None,
+        };
+        if let Some(t) = target {
+            self.switch_view(t);
+            return true;
+        }
+        false
+    }
+
+    fn next_tab(&self) -> View {
+        match self.view {
+            View::Status => View::Log,
+            View::Log => View::Status,
+            View::CommitEditor => self.view,
+        }
+    }
+
+    fn prev_tab(&self) -> View {
+        // Two tabs, so prev == next.
+        self.next_tab()
+    }
+
+    /// Switch the active tab. Refreshes the target view's data so counts and
+    /// content reflect the latest repo state on every entry.
+    pub fn switch_view(&mut self, target: View) {
+        if self.view == target {
+            return;
+        }
+        self.view = target;
+        match target {
+            View::Status => self.refresh_status(),
+            View::Log => self.refresh_log(),
+            View::CommitEditor => {}
+        }
+    }
+
     // --- command-mode prompt --------------------------------------------
 
     fn handle_prompt_key(&mut self, k: KeyEvent) {
-        // Ctrl-C always quits gitgud, even from the prompt.
-        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
-            self.should_quit = true;
-            return;
-        }
         let Some(p) = self.prompt.as_mut() else {
             return;
         };
@@ -154,25 +244,37 @@ impl App {
     ///
     /// Rules:
     /// - blank → no-op
-    /// - first token must be `git` — anything else is an unknown slash command
+    /// - `exit` / `quit` → quit gitgud (gitgud-internal slash commands)
+    /// - first token must otherwise be `git` — anything else is unknown
+    /// - `git log` / `git status` switch to the matching tab (canonical query
+    ///   runs; user's args show in the bar but don't shape the view — tracked
+    ///   in the GH issue for arg-honoring)
     /// - `git commit` with no `-m`/`-F`/`--message`/`--file` opens the modal
     ///   commit editor (would otherwise spawn `$EDITOR`)
-    /// - `git rebase -i` (and `--interactive`) is rejected until a rebase view
-    ///   ships
+    /// - `git rebase -i` / `git add -p` are rejected until those views ship
     /// - everything else is built into a `GitCmd` and run via `run_action`
     fn dispatch_prompt(&mut self, raw: String) {
         let trimmed = raw.trim();
         if trimmed.is_empty() {
-            // Stay in Command mode with an empty buffer ready for the next command.
             return;
         }
         let args = prompt::shell_split(trimmed);
         if args.is_empty() {
             return;
         }
+
+        // Built-in slash commands (no `git` prefix). Future: /help, /config, ...
+        match args[0].as_str() {
+            "exit" | "quit" => {
+                self.should_quit = true;
+                return;
+            }
+            _ => {}
+        }
+
         if args[0] != "git" {
             self.error = Some(format!(
-                "unknown command: /{trimmed} (commands must start with `git`)"
+                "unknown command: /{trimmed} (try /git ..., /exit, or /quit)"
             ));
             return;
         }
@@ -184,8 +286,8 @@ impl App {
         let sub = rest[0].as_str();
         let tail = &rest[1..];
 
+        // Editor-takeover intercept: commit-without-message routes to the modal.
         if sub == "commit" && !has_commit_message_flag(tail) {
-            // Route to the modal editor; prompt session is over.
             self.prompt = None;
             self.open_commit_editor();
             return;
@@ -199,25 +301,31 @@ impl App {
             return;
         }
 
+        // View-defining commands switch tabs. Per v1 design, the canonical
+        // query runs — the user's args are visible only in the prompt history
+        // (↑). Arg-honoring is a separate feature.
+        if sub == "log" {
+            self.switch_view(View::Log);
+            return;
+        }
+        if sub == "status" {
+            self.switch_view(View::Status);
+            return;
+        }
+
+        // Default: run the literal command.
         let mut cmd = git::GitCmd::new(sub);
         for a in tail {
             cmd = cmd.arg(a.as_str());
         }
         self.run_action(cmd);
-        // Stay in Command mode for rapid-fire input. Errors land in `self.error`
-        // and render above the prompt; success is implicit via the refreshed
-        // panes and command bar.
     }
 
     // --- commit editor ---------------------------------------------------
 
     fn handle_commit_editor_key(&mut self, k: KeyEvent) {
-        // Ctrl-C always quits gitgud, even from inside the editor. Esc is the
-        // vim-style "back to normal mode" / "cancel command" key.
-        if k.modifiers.contains(KeyModifiers::CONTROL) && k.code == KeyCode::Char('c') {
-            self.should_quit = true;
-            return;
-        }
+        // Ctrl-C is handled in `handle_key`; here `Esc` is the vim-style
+        // "back to normal mode" / "cancel command" key.
         let in_normal = matches!(self.commit_editor.mode, EditorMode::Normal);
         let in_insert = matches!(self.commit_editor.mode, EditorMode::Insert);
         if in_normal {
@@ -441,6 +549,66 @@ impl App {
             *sel = new as usize;
         }
         self.refresh_diff();
+    }
+
+    // --- log-view actions -----------------------------------------------
+
+    fn move_log_selection(&mut self, delta: i32) {
+        let len = self.log.len();
+        if len == 0 {
+            self.log_selected = 0;
+            self.log_detail = String::new();
+            return;
+        }
+        let new = match delta {
+            i32::MIN => 0,
+            i32::MAX => len - 1,
+            d => (self.log_selected as i32 + d).clamp(0, (len - 1) as i32) as usize,
+        };
+        if new != self.log_selected {
+            self.log_selected = new;
+        }
+        self.refresh_log_detail();
+    }
+
+    pub fn refresh_log(&mut self) {
+        let cmd = git::log::cmd();
+        self.history.record(&cmd.display());
+        match git::log::load() {
+            Ok(l) => {
+                self.log = l;
+                if self.log.is_empty() {
+                    self.log_selected = 0;
+                } else if self.log_selected >= self.log.len() {
+                    self.log_selected = self.log.len() - 1;
+                }
+                self.error = None;
+            }
+            Err(e) => self.error = Some(e.to_string()),
+        }
+        self.refresh_log_detail();
+    }
+
+    pub fn selected_commit(&self) -> Option<&git::LogEntry> {
+        self.log.entries.get(self.log_selected)
+    }
+
+    pub fn refresh_log_detail(&mut self) {
+        let Some(sha) = self.selected_commit().map(|c| c.sha.clone()) else {
+            self.log_detail = String::new();
+            return;
+        };
+        let cmd = git::log::show_stat_cmd(&sha);
+        self.history.record(&cmd.display());
+        match git::runner::run(&cmd) {
+            Ok(out) if out.success() => {
+                self.log_detail = out.stdout_str().into_owned();
+            }
+            Ok(out) => {
+                self.log_detail = format!("(git show exited {})\n{}", out.status, out.stderr_str());
+            }
+            Err(e) => self.log_detail = format!("(error: {})", e),
+        }
     }
 
     pub fn refresh_status(&mut self) {

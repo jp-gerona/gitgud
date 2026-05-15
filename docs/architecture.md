@@ -21,14 +21,17 @@ src/
 ├── git/
 │   ├── mod.rs        — GitCmd builder (the choke point for git calls)
 │   ├── runner.rs     — process spawning: run / run_with_stdin
-│   └── status.rs     — `git status --porcelain=v1 -z` parser
+│   ├── status.rs     — `git status --porcelain=v1 -z` parser
+│   └── log.rs        — `git log --pretty=format:...` parser + `git show --stat` builder
 └── ui/
     ├── mod.rs        — top-level draw + bottom hint/error line
     ├── theme.rs      — color constants
     ├── command_bar.rs— renders the most recent `git ...` from history
     ├── prompt_bar.rs — slash-Command prompt strip + terminal cursor
+    ├── tab_bar.rs    — top-row tab strip with live counts and numbered hints
     └── views/
         ├── status.rs — staged / unstaged / diff panes
+        ├── log.rs    — commit list + `git show --stat` detail (two-pane)
         └── commit.rs — modal vi editor + status row + hints
 ```
 
@@ -38,14 +41,20 @@ src/
 KeyEvent
   → event::poll
     → App::handle_key
-        ├── View::Status
-        │     ├── prompt.is_some() → handle_prompt_key → (Enter) dispatch_prompt
-        │     │                                          → build GitCmd → run_action
-        │     └── else            → keymap::key_to_action → match Action
-        └── View::CommitEditor   → match commit_editor.mode
-                                   ├── Normal  → handle_normal_mode_key
-                                   ├── Insert  → handle_insert_mode_key
-                                   └── Command → handle_command_mode_key
+        ├── Ctrl+C anywhere    → quit
+        ├── View::CommitEditor → match commit_editor.mode
+        │                         ├── Normal  → handle_normal_mode_key
+        │                         ├── Insert  → handle_insert_mode_key
+        │                         └── Command → handle_command_mode_key
+        └── tabbed view (Status | Log)
+              ├── prompt.is_some()  → handle_prompt_key → (Enter) dispatch_prompt
+              │                                            → build GitCmd → run_action
+              │                                              or switch_view (log/status)
+              │                                              or quit (/exit, /quit)
+              ├── key == '/'        → open prompt
+              ├── tab key (1/2/[/]) → switch_view
+              └── per-view dispatch → handle_status_normal_key
+                                      handle_log_normal_key
   → handler builds GitCmd → git::runner::run → updates App state
   → ui::draw repaints the active view + command bar + status line
 ```
@@ -78,7 +87,7 @@ Every git invocation blocks the UI thread for the duration of the subprocess. Mo
 ## What's not done yet
 
 - Hunk-level staging — needs `git diff` parsing and `git apply --cached`
-- Log view
+- Honoring slash-command args on view-defining commands (`--oneline`, `-n`, `--graph`, `--author=`) — tracked as a follow-up issue
 - Branch view
 - Stash view
 - Interactive rebase — would resurrect a small `editor.rs` for `$EDITOR` suspend

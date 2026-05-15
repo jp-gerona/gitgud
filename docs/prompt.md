@@ -83,8 +83,10 @@ A small subset of POSIX shell tokenizing — enough for things like `git commit 
 The dispatcher uses the first token to gate execution:
 
 - empty → no-op (stay in Command mode)
-- not `git` → `unknown command: /... (commands must start with `git`)` surfaced via `app.error`
+- `exit` / `quit` → quit gitgud (gitgud-internal slash commands; the namespace for future `/help`, `/config`, …)
+- not `git` and not a built-in → `unknown command: /... (try /git ..., /exit, or /quit)` via `app.error`
 - `git` + no further tokens → `missing git subcommand`
+- `git log` / `git status` → **switch to matching tab** (canonical query runs; args echoed in prompt history but don't shape the view — see [issue #1](https://github.com/jp-gerona/gitgud/issues/1))
 - `git <sub>` + args → built into a `GitCmd` and run via `app::run_action`
 
 ## Editor-takeover detection
